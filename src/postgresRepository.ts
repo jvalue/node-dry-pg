@@ -1,29 +1,37 @@
-import { Pool, PoolConfig, PoolClient, QueryResult } from 'pg'
+import { Pool, PoolConfig, QueryResult } from 'pg'
 
 import { sleep, stringifiers } from '@jvalue/node-dry-basics'
 
 export class PostgresRepository {
-  private connectionPool?: Pool = undefined
+  private readonly connectionPool: Pool
+
+  constructor (poolConfig?: PoolConfig) {
+    this.connectionPool = new Pool(poolConfig)
+    // Register an error handler to catch errors when the connection of an idle database client is closed,
+    // because of a backend error or a network partition. If those errors are not handled the NodeJS process will exit.
+    this.connectionPool.on('error', (err) => console.log('Idle postgres connection errored:', err.message))
+  }
 
   /**
-   * Initializes the connection to the database.
-   * @param poolConfig: configuration object for the connection pool
+   * Waits till a successfull connection to the database has been established.
+   * This methods tries repeatedly to perform the no-op query `SELECT 1` till the query succeeded.
+   *
+   * Note: There is no guarante that subsequent queries will also succeed, because we
+   * are in a distributed system, services and the network can fail at any time!
+   *
    * @param retries:  Number of retries to connect to the database
    * @param backoffMs:  Time in ms to backoff before next connection retry
    * @returns reject promise on failure to connect
    */
-  public async init (poolConfig: PoolConfig, retries: number, backoffMs: number): Promise<void> {
-    this.connectionPool = await this.connectWithRetry(poolConfig, retries, backoffMs)
-    console.info('Successfully established connection to database.')
-  }
-
-  private async connectWithRetry (poolConfig: PoolConfig, retries: number, backoffMs: number): Promise<Pool> {
-    console.debug(`Connecting to database with config:\n${JSON.stringify(poolConfig)}`)
+  public async waitForConnection (retries: number, backoffMs: number): Promise<void> {
+    console.debug('Waiting for a database connection')
 
     let lastError: Error | undefined
     for (let i = 1; i <= retries; i++) {
       try {
-        return await this.connect(poolConfig)
+        await this.connectionPool.query('SELECT 1')
+        console.info('Successfully established connection to database.')
+        return
       } catch (error) {
         lastError = error
         console.info(`Failed connecting to database (${i}/${retries})`)
@@ -33,36 +41,15 @@ export class PostgresRepository {
     throw lastError ?? new Error('Failed to connect to database')
   }
 
-  private async connect (poolConfig: PoolConfig): Promise<Pool> {
-    let client: PoolClient | undefined
-    try {
-      const connectionPool = new Pool(poolConfig)
-      client = await connectionPool.connect()
-      await client.query('SELECT 1')
-      console.info('Successfully established database connection')
-      return connectionPool
-    } finally {
-      client?.release()
-    }
-  }
-
   public async executeQuery (query: string, args: unknown[]): Promise<QueryResult> {
-    if (this.connectionPool === undefined) {
-      throw new Error('No connection pool available')
-    }
-
-    let client: PoolClient | undefined
     try {
-      client = await this.connectionPool.connect()
-      const resultSet = await client.query(query, args)
+      const resultSet = await this.connectionPool.query(query, args)
       console.debug(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)}` +
         `led to ${resultSet.rowCount} results`)
       return resultSet
     } catch (error) {
-      console.error(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} failed: ${error}`)
+      console.error(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} failed: `, error)
       throw error
-    } finally {
-      client?.release()
     }
   }
 }
