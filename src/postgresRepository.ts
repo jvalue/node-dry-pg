@@ -44,12 +44,16 @@ export class PostgresRepository {
   public async executeQuery (query: string, args: unknown[]): Promise<QueryResult> {
     try {
       const resultSet = await this.connectionPool.query(query, args)
-      console.debug(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)}` +
+      console.debug(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} ` +
         `led to ${resultSet.rowCount} results`)
       return resultSet
     } catch (error) {
-      console.error(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} failed: `, error)
+      console.error(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} failed:`, error)
       throw error
     }
+  }
+
+  public async close (): Promise<void> {
+    await this.connectionPool.end()
   }
 }
