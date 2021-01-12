@@ -1,4 +1,4 @@
-import { Pool, PoolConfig, QueryResult } from 'pg'
+import { Pool, PoolConfig, QueryResult, ClientBase } from 'pg'
 
 import { sleep, stringifiers } from '@jvalue/node-dry-basics'
 
@@ -41,7 +41,21 @@ export class PostgresRepository {
     throw lastError ?? new Error('Failed to connect to database')
   }
 
-  public async executeQuery (query: string, args: unknown[]): Promise<QueryResult> {
+  /**
+   * Executes a single query.
+   *
+   * Multiple calls to this method will use different clients from the internal connection pool.
+   * Because PostgreSQL isolates transactions to individual clients, do not use transactions with
+   * this method. Instead use the `transaction(...)` method.
+   *
+   * @param query the query to execute
+   * @param args optional parameter for parameterized queries
+   */
+  public async executeQuery (query: string, args?: unknown[]): Promise<QueryResult> {
+    if (args === undefined) {
+      args = []
+    }
+
     try {
       const resultSet = await this.connectionPool.query(query, args)
       console.debug(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} ` +
@@ -50,6 +64,29 @@ export class PostgresRepository {
     } catch (error) {
       console.error(`[Query] "${query}" with values ${stringifiers.stringifyArray(args)} failed:`, error)
       throw error
+    }
+  }
+
+  /**
+   * Executes the given function inside a transaction. The function must return a `Promise`.
+   * If the Promise resolves the transaction will be committed, otherwise the transaction will be rollbacked.
+   * Only use the database client passed to `func` to perform database operations, otherwise you will
+   * loose the transactional guarantees.
+   *
+   * @param func the `Promise` returning function to execute inside a transaction
+   */
+  public async transaction (func: (client: ClientBase) => Promise<void>): Promise<void> {
+    const client = await this.connectionPool.connect()
+
+    try {
+      await client.query('BEGIN')
+      await func(client)
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
   }
 
