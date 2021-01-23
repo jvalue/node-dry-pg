@@ -74,14 +74,17 @@ export class PostgresRepository {
    * loose the transactional guarantees.
    *
    * @param func the `Promise` returning function to execute inside a transaction
+   * @returns a `Promise` resolving with the value of the transaction function if the transaction has been committed.
+   * A rejected `Promise` otherwise
    */
-  public async transaction (func: (client: ClientBase) => Promise<void>): Promise<void> {
+  public async transaction<T> (func: (client: ClientBase) => Promise<T>): Promise<T> {
     const client = await this.connectionPool.connect()
 
     try {
       await client.query('BEGIN')
-      await func(client)
+      const result = await func(client)
       await client.query('COMMIT')
+      return result
     } catch (error) {
       await client.query('ROLLBACK')
       throw error

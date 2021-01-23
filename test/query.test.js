@@ -113,7 +113,7 @@ describe('node-dry-pg query test', () => {
     await startDatabase()
     await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
-    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name text)`)
+    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
     await postgresRepository.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
 
     await postgresRepository.transaction(async client => {
@@ -141,7 +141,7 @@ describe('node-dry-pg query test', () => {
     await startDatabase()
     await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
-    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name text)`)
+    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
     await postgresRepository.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
 
     try {
@@ -165,5 +165,20 @@ describe('node-dry-pg query test', () => {
 
     const result = await postgresRepository.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
     expect(result.rows.map(r => r.name)).toEqual(['Test 1'])
+  }, TEST_TIMEOUT)
+
+  test('transaction returns result', async () => {
+    const TABLE_NAME = 'transaction_result_test'
+    await startDatabase()
+    await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+
+    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (id SERIAL, name TEXT)`)
+    const result = await postgresRepository.transaction(async client => {
+      const { rows: rows1 } = await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1) RETURNING id`, ['Test 1'])
+      const { rows: rows2 } = await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1) RETURNING id`, ['Test 2'])
+      return [rows1[0], rows2[0]]
+    })
+
+    expect(result).toEqual([{ id: 1 }, { id: 2 }])
   }, TEST_TIMEOUT)
 })
