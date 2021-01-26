@@ -3,7 +3,7 @@ const { promisify } = require('util')
 const exec = promisify(require('child_process').exec)
 const { sleep } = require('@jvalue/node-dry-basics')
 
-const { PostgresRepository } = require('../src/postgresRepository')
+const { PostgresClient } = require('../src/postgresClient')
 
 const CONTAINER_NAME = 'node-dry-pg-test-database'
 const DATABASE_PORT = 5432
@@ -30,15 +30,15 @@ async function startDatabase () {
 }
 
 describe('node-dry-pg query test', () => {
-  let postgresRepository
+  let postgresClient
 
   beforeEach(() => {
-    postgresRepository = new PostgresRepository(POOL_CONFIG)
+    postgresClient = new PostgresClient(POOL_CONFIG)
   })
 
   afterEach(async () => {
     try {
-      await postgresRepository.close()
+      await postgresClient.close()
     } catch {}
 
     try {
@@ -54,7 +54,7 @@ describe('node-dry-pg query test', () => {
     await startDatabase()
     await sleep(DB_STARTUP_TIME)
 
-    const result = await postgresRepository.executeQuery('SELECT 1')
+    const result = await postgresClient.executeQuery('SELECT 1')
     expect(result).toBeDefined()
     expect(result.rowCount).toEqual(1)
   }, TEST_TIMEOUT)
@@ -67,19 +67,19 @@ describe('node-dry-pg query test', () => {
     await sleep(DB_STARTUP_TIME)
 
     try {
-      await postgresRepository.executeQuery('SELECT * FROM unknown_table')
+      await postgresClient.executeQuery('SELECT * FROM unknown_table')
     } catch (error) {
       expect(error).toHaveProperty('message', 'relation "unknown_table" does not exist')
     }
   }, TEST_TIMEOUT)
 
   test('waitsForConnection succeeds', async () => {
-    const waitForConnectionPromise = postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+    const waitForConnectionPromise = postgresClient.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
     await startDatabase()
 
     await waitForConnectionPromise
 
-    const result = await postgresRepository.executeQuery('SELECT 1')
+    const result = await postgresClient.executeQuery('SELECT 1')
     expect(result).toBeDefined()
     expect(result.rowCount).toEqual(1)
   }, TEST_TIMEOUT)
@@ -88,7 +88,7 @@ describe('node-dry-pg query test', () => {
     expect.assertions(1)
 
     try {
-      await postgresRepository.waitForConnection(2, 200)
+      await postgresClient.waitForConnection(2, 200)
     } catch (error) {
       expect(error).toHaveProperty('message', 'connect ECONNREFUSED 127.0.0.1:5432')
     }
@@ -96,14 +96,14 @@ describe('node-dry-pg query test', () => {
 
   test('handles connection loss', async () => {
     await startDatabase()
-    await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+    await postgresClient.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
     await exec(`docker stop ${CONTAINER_NAME}`)
     await exec(`docker start ${CONTAINER_NAME}`)
 
     await sleep(DB_STARTUP_TIME)
 
-    const result = await postgresRepository.executeQuery('SELECT 1')
+    const result = await postgresClient.executeQuery('SELECT 1')
     expect(result).toBeDefined()
     expect(result.rowCount).toEqual(1)
   }, TEST_TIMEOUT)
@@ -111,12 +111,12 @@ describe('node-dry-pg query test', () => {
   test('commit transaction', async () => {
     const TABLE_NAME = 'transaction_commit_test'
     await startDatabase()
-    await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+    await postgresClient.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
-    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
-    await postgresRepository.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
+    await postgresClient.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
+    await postgresClient.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
 
-    await postgresRepository.transaction(async client => {
+    await postgresClient.transaction(async client => {
       await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 2'])
       await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 3'])
 
@@ -125,11 +125,11 @@ describe('node-dry-pg query test', () => {
       expect(result1.rows.map(r => r.name)).toEqual(['Test 1', 'Test 2', 'Test 3'])
 
       // From outside of the transaction the inserts should not be visible
-      const result2 = await postgresRepository.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
+      const result2 = await postgresClient.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
       expect(result2.rows.map(r => r.name)).toEqual(['Test 1'])
     })
 
-    const result = await postgresRepository.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
+    const result = await postgresClient.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
     expect(result.rows.map(r => r.name)).toEqual(['Test 1', 'Test 2', 'Test 3'])
   }, TEST_TIMEOUT)
 
@@ -139,13 +139,13 @@ describe('node-dry-pg query test', () => {
 
     const TABLE_NAME = 'transaction_rollback_test'
     await startDatabase()
-    await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+    await postgresClient.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
-    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
-    await postgresRepository.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
+    await postgresClient.executeQuery(`CREATE TABLE ${TABLE_NAME} (name TEXT)`)
+    await postgresClient.executeQuery(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 1'])
 
     try {
-      await postgresRepository.transaction(async client => {
+      await postgresClient.transaction(async client => {
         await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 2'])
         await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1)`, ['Test 3'])
 
@@ -154,7 +154,7 @@ describe('node-dry-pg query test', () => {
         expect(result1.rows.map(r => r.name)).toEqual(['Test 1', 'Test 2', 'Test 3'])
 
         // From outside of the transaction the inserts should not be visible
-        const result2 = await postgresRepository.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
+        const result2 = await postgresClient.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
         expect(result2.rows.map(r => r.name)).toEqual(['Test 1'])
 
         throw new Error('Error in database transaction')
@@ -163,17 +163,17 @@ describe('node-dry-pg query test', () => {
       expect(error).toHaveProperty('message', 'Error in database transaction')
     }
 
-    const result = await postgresRepository.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
+    const result = await postgresClient.executeQuery(`SELECT * FROM ${TABLE_NAME}`)
     expect(result.rows.map(r => r.name)).toEqual(['Test 1'])
   }, TEST_TIMEOUT)
 
   test('transaction returns result', async () => {
     const TABLE_NAME = 'transaction_result_test'
     await startDatabase()
-    await postgresRepository.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
+    await postgresClient.waitForConnection(DB_CONNECTION_RETRIES, DB_CONNECTION_BACKOFF)
 
-    await postgresRepository.executeQuery(`CREATE TABLE ${TABLE_NAME} (id SERIAL, name TEXT)`)
-    const result = await postgresRepository.transaction(async client => {
+    await postgresClient.executeQuery(`CREATE TABLE ${TABLE_NAME} (id SERIAL, name TEXT)`)
+    const result = await postgresClient.transaction(async client => {
       const { rows: rows1 } = await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1) RETURNING id`, ['Test 1'])
       const { rows: rows2 } = await client.query(`INSERT INTO ${TABLE_NAME}(name) VALUES ($1) RETURNING id`, ['Test 2'])
       return [rows1[0], rows2[0]]
