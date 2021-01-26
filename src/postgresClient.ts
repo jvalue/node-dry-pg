@@ -2,7 +2,7 @@ import { Pool, PoolConfig, QueryResult, ClientBase } from 'pg'
 
 import { sleep, stringifiers } from '@jvalue/node-dry-basics'
 
-export class PostgresRepository {
+export class PostgresClient {
   private readonly connectionPool: Pool
 
   constructor (poolConfig?: PoolConfig) {
